@@ -1,0 +1,716 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SPECTRA // TOPOGRAPHIA — Volümetrik Sanat Hologramı</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;500;700&family=JetBrains+Mono:wght@400;700&display=swap');
+  * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; }
+  body, html {
+    width: 100vw; height: 100vh; background: #000000; color: #e2f1ff;
+    font-family: 'Space Grotesk', sans-serif; overflow: hidden;
+  }
+  #stage {
+    position: relative; width: 100%; height: 100%; background: #000000;
+    overflow: hidden; cursor: grab;
+  }
+  #stage:active { cursor: grabbing; }
+  #webgl-canvas {
+    position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 2;
+  }
+  /* Holografik Tarama Çizgisi (Scanline) Katmanı */
+  #scanline-overlay {
+    position: absolute; inset: 0; z-index: 3; pointer-events: none;
+    background: repeating-linear-gradient(
+      0deg,
+      rgba(0, 240, 255, 0.03) 0px,
+      rgba(0, 240, 255, 0.03) 1px,
+      transparent 1px,
+      transparent 4px
+    );
+    box-shadow: inset 0 0 120px rgba(0, 0, 0, 0.9);
+  }
+  /* Piramit Kalibrasyon Rehberi (Sadece Mod 4'te görünür) */
+  #pyramid-guide {
+    position: absolute; inset: 0; z-index: 4; pointer-events: none;
+    display: none; justify-content: center; align-items: center;
+  }
+  .pyramid-box {
+    width: 120px; height: 120px; border: 1px dashed rgba(0, 240, 255, 0.45);
+    position: relative; display: flex; justify-content: center; align-items: center;
+  }
+  .pyramid-box::before, .pyramid-box::after {
+    content: ''; position: absolute; background: rgba(0, 240, 255, 0.25);
+  }
+  .pyramid-box::before { width: 100%; height: 1px; }
+  .pyramid-box::after { width: 1px; height: 100%; }
+  .pyramid-label {
+    font-family: 'JetBrains Mono', monospace; font-size: 9px; color: rgba(0,240,255,0.7);
+    text-align: center; background: rgba(0,0,0,0.8); padding: 2px 6px;
+  }
+
+  /* Üst HUD Bar */
+  .hud-header {
+    position: absolute; top: 20px; left: 24px; right: 24px; z-index: 10;
+    display: flex; justify-content: space-between; align-items: flex-start;
+    pointer-events: none; transition: opacity 0.4s;
+  }
+  .title-card {
+    background: rgba(2, 6, 12, 0.78); backdrop-filter: blur(10px);
+    border-left: 3px solid #00f0ff; padding: 12px 18px;
+    border-top: 1px solid rgba(0,240,255,0.15);
+  }
+  .title-main {
+    font-size: 17px; font-weight: 700; letter-spacing: 3.5px; color: #fff;
+    display: flex; align-items: center; gap: 10px;
+  }
+  .holo-pulse {
+    width: 8px; height: 8px; border-radius: 50%; background: #00f0ff;
+    box-shadow: 0 0 12px #00f0ff; animation: blink 1.4s infinite;
+  }
+  @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
+  .title-sub {
+    font-family: 'JetBrains Mono', monospace; font-size: 10px; color: #7aa2c4;
+    letter-spacing: 1.5px; margin-top: 4px;
+  }
+
+  /* Sağ Ayarlar & Derinlik Sürgüleri */
+  .Sliders-panel {
+    pointer-events: auto; background: rgba(2, 6, 12, 0.82); backdrop-filter: blur(12px);
+    border: 1px solid rgba(0, 240, 255, 0.22); padding: 12px 16px; border-radius: 8px;
+    font-family: 'JetBrains Mono', monospace; font-size: 11px; width: 250px;
+  }
+  .slider-row {
+    display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;
+  }
+  .slider-row:last-child { margin-bottom: 0; }
+  .slider-row label { color: #9ec2e0; font-size: 10px; }
+  .slider-row input[type=range] {
+    width: 110px; accent-color: #00f0ff; cursor: pointer; height: 4px;
+  }
+
+  /* Alt Kontrol Dock */
+  .dock {
+    position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%);
+    z-index: 10; display: flex; gap: 8px; flex-wrap: wrap; justify-content: center;
+    background: rgba(3, 8, 16, 0.85); backdrop-filter: blur(16px);
+    padding: 10px 14px; border-radius: 12px; border: 1px solid rgba(0, 240, 255, 0.2);
+    box-shadow: 0 10px 40px rgba(0,0,0,0.9); width: 95%; max-width: 1040px;
+    transition: opacity 0.4s;
+  }
+  .h-btn {
+    background: rgba(0, 240, 255, 0.05); color: #cbe6ff;
+    border: 1px solid rgba(0, 240, 255, 0.2); padding: 8px 13px; border-radius: 7px;
+    font-family: 'Space Grotesk', sans-serif; font-size: 12px; font-weight: 500;
+    cursor: pointer; transition: all 0.2s; letter-spacing: 0.5px;
+  }
+  .h-btn:hover {
+    background: rgba(0, 240, 255, 0.18); border-color: #00f0ff; color: #fff;
+    box-shadow: 0 0 15px rgba(0, 240, 255, 0.3);
+  }
+  .h-btn.active {
+    background: linear-gradient(135deg, rgba(0,240,255,0.3), rgba(0,110,255,0.35));
+    border-color: #00f0ff; color: #fff; box-shadow: 0 0 18px rgba(0,240,255,0.45);
+  }
+  .sep { width: 1px; background: rgba(0, 240, 255, 0.2); margin: 0 4px; }
+
+  /* Açılış Modalı */
+  #intro-modal {
+    position: absolute; inset: 0; z-index: 30;
+    background: radial-gradient(circle at center, rgba(6, 16, 28, 0.94) 0%, #000000 100%);
+    display: flex; flex-direction: column; justify-content: center; align-items: center;
+    text-align: center; padding: 24px;
+  }
+  .badge {
+    font-family: 'JetBrains Mono', monospace; font-size: 11px; letter-spacing: 3px;
+    color: #00f0ff; border: 1px solid rgba(0,240,255,0.4); padding: 6px 16px;
+    border-radius: 20px; margin-bottom: 16px; background: rgba(0,240,255,0.06);
+  }
+  .main-heading {
+    font-size: 38px; font-weight: 700; letter-spacing: 6px; margin-bottom: 12px;
+    background: linear-gradient(90deg, #ffffff, #00f0ff, #ff2a85);
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+  }
+  .sub-desc {
+    max-width: 620px; font-size: 14px; color: #9ab3c9; line-height: 1.65; margin-bottom: 26px;
+  }
+  .feature-cards {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(195px, 1fr));
+    gap: 12px; width: 100%; max-width: 760px; margin-bottom: 28px; text-align: left;
+  }
+  .f-card {
+    background: rgba(0, 240, 255, 0.03); border: 1px solid rgba(0, 240, 255, 0.14);
+    padding: 14px; border-radius: 8px;
+  }
+  .f-card h4 { font-size: 12px; color: #00f0ff; margin-bottom: 5px; letter-spacing: 0.5px; }
+  .f-card p { font-size: 11px; color: #849fb8; line-height: 1.45; }
+  .btn-group { display: flex; gap: 14px; flex-wrap: wrap; justify-content: center; }
+  .launch-btn {
+    background: linear-gradient(90deg, #00f0ff, #0077ff); color: #000;
+    border: none; padding: 14px 30px; font-size: 14px; font-weight: 700;
+    letter-spacing: 2px; border-radius: 8px; cursor: pointer;
+    box-shadow: 0 0 30px rgba(0,240,255,0.45); transition: all 0.2s;
+  }
+  .launch-btn:hover { transform: scale(1.04); box-shadow: 0 0 45px rgba(0,240,255,0.75); }
+  .sim-btn {
+    background: rgba(255,255,255,0.06); color: #fff; border: 1px solid rgba(255,255,255,0.25);
+    padding: 14px 24px; font-size: 13px; font-weight: 500; letter-spacing: 1.5px;
+    border-radius: 8px; cursor: pointer; transition: all 0.2s;
+  }
+  .sim-btn:hover { border-color: #00f0ff; background: rgba(0,240,255,0.12); }
+
+  video { display: none; }
+</style>
+</head>
+<body>
+
+<div id="stage">
+  <!-- Açılış Ekranı -->
+  <div id="intro-modal">
+    <div class="badge">YÜKSEK LİSANS HOLOGRAM ENSTALASYONU // WEBGL + GLSL</div>
+    <div class="main-heading">SPECTRA // TOPOGRAPHIA</div>
+    <p class="sub-desc">
+      Gerçek zamanlı kamera derinlik ekstrüzyonu (3D Z-Relief), lazer interferometri taraması ve <strong>4-Eksenli Fiziksel Piramit (Pepper's Ghost)</strong> projeksiyon mimarisini birleştiren interaktif sanatsal hologram.
+    </p>
+    <div class="feature-cards">
+      <div class="f-card">
+        <h4>🌐 360° 3D Rölyef Heykel</h4>
+        <p>Görüntünüzü Z-ekseninde 3 boyutlu bir topografyaya dönüştürür; fareyle tutup profilden inceleyebilirsiniz.</p>
+      </div>
+      <div class="f-card">
+        <h4>🧶 Kızıl İplik & Prizma</h4>
+        <p>Çağdaş sanat estetiğinde nöral iplik dokuması ve RGB spektral kırılma katmanları üretir.</p>
+      </div>
+      <div class="f-card">
+        <h4>🔺 Fiziksel Piramit Modu</h4>
+        <p>Mod 4'ü seçip ekranın ortasına şeffaf pleksi piramit koyarak görüntüyü havada asılı sergileyin.</p>
+      </div>
+    </div>
+    <div class="btn-group">
+      <button class="launch-btn" id="cam-start-btn">🎥 KAMERA İLE HOLOGRAMI BAŞLAT</button>
+      <button class="sim-btn" id="sim-start-btn">✨ KAMERASIZ SİMÜLASYON MODU</button>
+    </div>
+  </div>
+
+  <!-- Üst Bilgi ve Parametre Sürgüleri -->
+  <div class="hud-header" id="hud-top">
+    <div class="title-card">
+      <div class="title-main"><div class="holo-pulse"></div> SPECTRA // TOPOGRAPHIA</div>
+      <div class="title-sub" id="mode-label">MOD 01 // SİBER-LAZER VOLÜMETRİK TOPOGRAFYA</div>
+      <div class="title-sub" style="color:#00f0ff; margin-top:4px;">💡 İPUCU: FARE İLE SÜRÜKLEYEREK HOLOGRAMI 3D ÇEVİRİN</div>
+    </div>
+
+    <div class="Sliders-panel">
+      <div class="slider-row">
+        <label>3D DERİNLİK (Z):</label>
+        <input type="range" id="depth-slider" min="10" max="110" value="55">
+      </div>
+      <div class="slider-row">
+        <label>LAZER SIKLIĞI:</label>
+        <input type="range" id="glitch-slider" min="0" max="40" value="8">
+      </div>
+      <div class="slider-row">
+        <label>3D OTO-SALINIM:</label>
+        <input type="checkbox" id="turntable-chk" checked style="accent-color:#00f0ff; cursor:pointer;">
+      </div>
+    </div>
+  </div>
+
+  <!-- Fiziksel Piramit Merkez Rehberi (Mod 4 için) -->
+  <div id="pyramid-guide">
+    <div class="pyramid-box">
+      <div class="pyramid-label">PİRAMİT MERKEZİ<br>(PEPPER'S GHOST)</div>
+    </div>
+  </div>
+
+  <div id="scanline-overlay"></div>
+  <video id="webcam" playsinline muted></video>
+  <canvas id="webgl-canvas"></canvas>
+
+  <!-- Alt Sergi Kontrol Dock -->
+  <div class="dock" id="hud-bottom">
+    <button class="h-btn active" onclick="switchMode(0, this)">🌐 1. Siber-Lazer Rölyef</button>
+    <button class="h-btn" onclick="switchMode(1, this)">🧶 2. Kızıl İplik Topografyası</button>
+    <button class="h-btn" onclick="switchMode(2, this)">💎 3. Spektral Prizma (RGB)</button>
+    <button class="h-btn" onclick="switchMode(3, this)">🔺 4. Fiziksel Piramit (4-Yönlü)</button>
+    <div class="sep"></div>
+    <button class="h-btn" onclick="resetCameraAngle()">🎯 Açıyı Sıfırla</button>
+    <button class="h-btn" onclick="toggleCleanExhibition()">👁️ Sergi Modu (HUD Gizle)</button>
+    <button class="h-btn" onclick="downloadHoloShot()">📸 Hologram Kaydet</button>
+    <button class="h-btn" onclick="goFullscreen()">⛶ Tam Ekran</button>
+  </div>
+</div>
+
+<script>
+// ============================================================================
+// TEMEL KURULUM VE VOLÜMETRİK HOLOGRAM MOTORU
+// ============================================================================
+const stage = document.getElementById('stage');
+const canvas = document.getElementById('webgl-canvas');
+const video = document.getElementById('webcam');
+
+let width = stage.clientWidth;
+let height = stage.clientHeight;
+let currentMode = 0; // 0: Lazer, 1: Kızıl İplik, 2: Spektral Prizma, 3: 4-Yönlü Piramit
+let useSimMode = false;
+let hudVisible = true;
+
+// Derinlik Analiz Çözünürlüğü (140x105 = 14,700 gerçek zamanlı 3D tepe noktası)
+const COLS = 140;
+const ROWS = 105;
+const VERTEX_COUNT = COLS * ROWS;
+
+const sampleCanvas = document.createElement('canvas');
+sampleCanvas.width = COLS;
+sampleCanvas.height = ROWS;
+const sampleCtx = sampleCanvas.getContext('2d', { willReadFrequently: true });
+
+// El Etkileşimi Verisi
+let handPoint = { active: false, x: 0, y: 0, pinch: false };
+
+// ============================================================================
+// THREE.JS SAHNE VE HOLOGRAFİK KATMANLAR
+// ============================================================================
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(50, width / height, 0.1, 1000);
+camera.position.set(0, 0, 145);
+
+const renderer = new THREE.WebGLRenderer({
+  canvas: canvas,
+  antialias: true,
+  preserveDrawingBuffer: true
+});
+renderer.setSize(width, height);
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setClearColor(0x000000, 1);
+
+// Ana Hologram Grubu (3D döndürülebilir büst)
+const holoGroup = new THREE.Group();
+scene.add(holoGroup);
+
+// 1. KATMAN: YATAY LAZER TARAMA ÇİZGİLERİ VE AĞ DOKUSU (LineSegments)
+const lineIndices = [];
+for (let r = 0; r < ROWS; r++) {
+  for (let c = 0; c < COLS - 1; c++) {
+    const idx = r * COLS + c;
+    // Yatay lazer tarama çizgileri
+    lineIndices.push(idx, idx + 1);
+    // Dikey topografik bağlantılar (her 2 sütunda bir)
+    if (r < ROWS - 1 && c % 2 === 0) {
+      lineIndices.push(idx, idx + COLS);
+    }
+  }
+}
+
+const meshGeom = new THREE.BufferGeometry();
+const positions = new Float32Array(VERTEX_COUNT * 3);
+const colors = new Float32Array(VERTEX_COUNT * 3);
+const smoothZ = new Float32Array(VERTEX_COUNT);
+
+for (let r = 0; r < ROWS; r++) {
+  for (let c = 0; c < COLS; c++) {
+    const i = r * COLS + c;
+    const i3 = i * 3;
+    positions[i3] = (c / (COLS - 1) - 0.5) * 115;
+    positions[i3 + 1] = (0.5 - r / (ROWS - 1)) * 86;
+    positions[i3 + 2] = 0;
+
+    colors[i3] = 0.0;
+    colors[i3 + 1] = 0.9;
+    colors[i3 + 2] = 1.0;
+  }
+}
+
+meshGeom.setIndex(lineIndices);
+meshGeom.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+meshGeom.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+
+const lineMat = new THREE.LineBasicMaterial({
+  vertexColors: true,
+  transparent: true,
+  opacity: 0.72,
+  blending: THREE.AdditiveBlending
+});
+const holoWireframe = new THREE.LineSegments(meshGeom, lineMat);
+holoGroup.add(holoWireframe);
+
+// 2. KATMAN: VOLÜMETRİK PARÇACIK BULUTU (Aynı tepe noktaları üzerinde parlayan düğümler)
+const pointMat = new THREE.PointsMaterial({
+  size: 1.5,
+  vertexColors: true,
+  transparent: true,
+  opacity: 0.85,
+  blending: THREE.AdditiveBlending
+});
+const holoPoints = new THREE.Points(meshGeom, pointMat);
+holoGroup.add(holoPoints);
+
+// 3. KATMAN: SPEKTRAL PRİZMA (RGB Kırılma Gölge Katmanı - Mod 2'de belirginleşir)
+const ghostMat1 = new THREE.PointsMaterial({
+  size: 1.6, color: 0xff0055, transparent: true, opacity: 0.0, blending: THREE.AdditiveBlending
+});
+const ghostLayer1 = new THREE.Points(meshGeom, ghostMat1);
+ghostLayer1.position.set(2.2, 0, -4);
+holoGroup.add(ghostLayer1);
+
+const ghostMat2 = new THREE.PointsMaterial({
+  size: 1.6, color: 0x00ffcc, transparent: true, opacity: 0.0, blending: THREE.AdditiveBlending
+});
+const ghostLayer2 = new THREE.Points(meshGeom, ghostMat2);
+ghostLayer2.position.set(-2.2, 0, 4);
+holoGroup.add(ghostLayer2);
+
+// 4. KATMAN: HOLOGRAFİK SİBER-USTURLAB HALKALARI (Uzamsal Derinlik Çerçevesi)
+const ringGroup = new THREE.Group();
+holoGroup.add(ringGroup);
+
+const ringGeo1 = new THREE.RingGeometry(52, 52.6, 64);
+const ringMat1 = new THREE.MeshBasicMaterial({
+  color: 0x00f0ff, side: THREE.DoubleSide, transparent: true, opacity: 0.28, blending: THREE.AdditiveBlending
+});
+const astroRing1 = new THREE.Mesh(ringGeo1, ringMat1);
+astroRing1.position.z = -10;
+ringGroup.add(astroRing1);
+
+const ringGeo2 = new THREE.RingGeometry(60, 60.4, 6);
+const ringMat2 = new THREE.MeshBasicMaterial({
+  color: 0xff0066, side: THREE.DoubleSide, transparent: true, opacity: 0.2, blending: THREE.AdditiveBlending
+});
+const astroRing2 = new THREE.Mesh(ringGeo2, ringMat2);
+astroRing2.position.z = -15;
+ringGroup.add(astroRing2);
+
+// Hareketli Lazer Tarama Düzlemi (Yukarıdan aşağıya inen hologram ışını)
+const scannerGeo = new THREE.PlaneGeometry(122, 1.2);
+const scannerMat = new THREE.MeshBasicMaterial({
+  color: 0x00ffff, transparent: true, opacity: 0.45, side: THREE.DoubleSide, blending: THREE.AdditiveBlending
+});
+const laserScannerBar = new THREE.Mesh(scannerGeo, scannerMat);
+holoGroup.add(laserScannerBar);
+
+// ============================================================================
+// FARE İLE 360° 3D DÖNDÜRME (ORBIT CONTROL)
+// ============================================================================
+let isDragging = false;
+let prevMouse = { x: 0, y: 0 };
+let targetRot = { x: 0.08, y: -0.32 }; // Başlangıçta hafif 3D perspektif açısı
+
+stage.addEventListener('pointerdown', (e) => {
+  if (e.target.tagName === 'BUTTON' || e.target.tagName === 'INPUT') return;
+  isDragging = true;
+  prevMouse.x = e.clientX;
+  prevMouse.y = e.clientY;
+});
+window.addEventListener('pointermove', (e) => {
+  if (!isDragging) return;
+  const dx = e.clientX - prevMouse.x;
+  const dy = e.clientY - prevMouse.y;
+  targetRot.y += dx * 0.007;
+  targetRot.x += dy * 0.007;
+  targetRot.x = Math.max(-1.1, Math.min(1.1, targetRot.x));
+  prevMouse.x = e.clientX;
+  prevMouse.y = e.clientY;
+});
+window.addEventListener('pointerup', () => { isDragging = false; });
+
+window.resetCameraAngle = function() {
+  targetRot = { x: 0.0, y: 0.0 };
+};
+
+// ============================================================================
+// SERGİ MODLARI VE KONTROLLER
+// ============================================================================
+const modeDescriptions = [
+  "MOD 01 // SİBER-LAZER VOLÜMETRİK TOPOGRAFYA",
+  "MOD 02 // KIZIL İPLİK & NÖRAL AĞ ENSTALASYONU",
+  "MOD 03 // SPEKTRAL PRİZMA & KROMATİK KIRILMA",
+  "MOD 04 // 4-EKSENLİ FİZİKSEL PİRAMİT HOLOGRAMI (PEPPER'S GHOST)"
+];
+
+window.switchMode = function(m, btn) {
+  currentMode = m;
+  document.querySelectorAll('.dock .h-btn').forEach((b, i) => {
+    if (i < 4) b.classList.remove('active');
+  });
+  if (btn) btn.classList.add('active');
+  document.getElementById('mode-label').innerText = modeDescriptions[m];
+
+  // Mod 2 (Spektral Prizma) için RGB katmanlarını aç
+  ghostMat1.opacity = (m === 2) ? 0.55 : 0.0;
+  ghostMat2.opacity = (m === 2) ? 0.55 : 0.0;
+
+  // Mod 1 (Kızıl İplik) için halka rengini güncelle
+  ringMat1.color.setHex(m === 1 ? 0xff1e42 : 0x00f0ff);
+  scannerMat.color.setHex(m === 1 ? 0xff3355 : 0x00ffff);
+
+  // Mod 3 (4-Yönlü Fiziksel Piramit) rehberi
+  document.getElementById('pyramid-guide').style.display = (m === 3) ? 'flex' : 'none';
+};
+
+window.toggleCleanExhibition = function() {
+  hudVisible = !hudVisible;
+  document.getElementById('hud-top').style.opacity = hudVisible ? '1' : '0';
+  document.getElementById('hud-bottom').style.opacity = hudVisible ? '1' : '0.15';
+};
+
+window.downloadHoloShot = function() {
+  const a = document.createElement('a');
+  a.download = 'SPECTRA_HOLOGRAM_' + Date.now() + '.png';
+  a.href = canvas.toDataURL('image/png');
+  a.click();
+};
+
+window.goFullscreen = function() {
+  if (!document.fullscreenElement) stage.requestFullscreen().catch(() => {});
+  else document.exitFullscreen();
+};
+
+function onResize() {
+  width = stage.clientWidth;
+  height = stage.clientHeight;
+  camera.aspect = width / height;
+  camera.updateProjectionMatrix();
+  renderer.setSize(width, height);
+}
+window.addEventListener('resize', onResize);
+
+// ============================================================================
+// MEDIAPIPE EL TAKİBİ VE KAMERA BAŞLATMA
+// ============================================================================
+const hands = new Hands({
+  locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+});
+hands.setOptions({
+  maxNumHands: 1,
+  modelComplexity: 1,
+  minDetectionConfidence: 0.6,
+  minTrackingConfidence: 0.6
+});
+hands.onResults((res) => {
+  if (res.multiHandLandmarks && res.multiHandLandmarks.length > 0) {
+    const lm = res.multiHandLandmarks[0];
+    handPoint.active = true;
+    handPoint.x = (0.5 - lm[8].x) * 115;
+    handPoint.y = (0.5 - lm[8].y) * 86;
+    const d = Math.hypot(lm[8].x - lm[4].x, lm[8].y - lm[4].y);
+    handPoint.pinch = d < 0.08;
+  } else {
+    handPoint.active = false;
+  }
+});
+
+document.getElementById('cam-start-btn').addEventListener('click', async () => {
+  document.getElementById('cam-start-btn').innerText = "LAZER TARAYICI AÇILIYOR...";
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: "user" }
+    });
+    video.srcObject = stream;
+    await video.play();
+    document.getElementById('intro-modal').style.display = 'none';
+
+    async function trackHands() {
+      if (video.readyState >= 2) await hands.send({ image: video });
+      requestAnimationFrame(trackHands);
+    }
+    trackHands();
+    requestAnimationFrame(renderLoop);
+  } catch (e) {
+    alert("Kamera izni alınamadı, Simülasyon Modu başlatılıyor.");
+    useSimMode = true;
+    document.getElementById('intro-modal').style.display = 'none';
+    requestAnimationFrame(renderLoop);
+  }
+});
+
+document.getElementById('sim-start-btn').addEventListener('click', () => {
+  useSimMode = true;
+  document.getElementById('intro-modal').style.display = 'none';
+  requestAnimationFrame(renderLoop);
+});
+
+// ============================================================================
+// ANA HOLOGRAFİK FİZİK VE 4-EKSENLİ RENDER DÖNGÜSÜ
+// ============================================================================
+let clock = 0;
+
+function renderLoop() {
+  requestAnimationFrame(renderLoop);
+  clock += 0.025;
+
+  const depthMultiplier = parseFloat(document.getElementById('depth-slider').value);
+  const glitchStrength = parseFloat(document.getElementById('glitch-slider').value);
+  const autoTurntable = document.getElementById('turntable-chk').checked;
+
+  // Lazer tarama çubuğunu yukarıdan aşağıya hareket ettir
+  const scanY = Math.sin(clock * 1.4) * 42;
+  laserScannerBar.position.y = scanY;
+  laserScannerBar.position.z = 12;
+
+  // Halka rotasyonları
+  astroRing1.rotation.z = clock * 0.2;
+  astroRing2.rotation.z = -clock * 0.35;
+
+  // Kamera verisini oku
+  let pixels = null;
+  if (!useSimMode && video.readyState >= 2) {
+    sampleCtx.save();
+    sampleCtx.scale(-1, 1);
+    sampleCtx.drawImage(video, -COLS, 0, COLS, ROWS);
+    sampleCtx.restore();
+    pixels = sampleCtx.getImageData(0, 0, COLS, ROWS).data;
+  }
+
+  const posArr = meshGeom.attributes.position.array;
+  const colArr = meshGeom.attributes.color.array;
+
+  for (let r = 0; r < ROWS; r++) {
+    // Yatay hologram glitch (frekans kayması)
+    const rowGlitch = (Math.sin(r * 0.7 + clock * 9) > 0.96) ? (Math.random() - 0.5) * glitchStrength * 0.4 : 0;
+
+    for (let c = 0; c < COLS; c++) {
+      const i = r * COLS + c;
+      const i3 = i * 3;
+      const baseX = (c / (COLS - 1) - 0.5) * 115;
+      const baseY = (0.5 - r / (ROWS - 1)) * 86;
+
+      let lum = 0;
+      let edgeBoost = 0;
+
+      if (pixels) {
+        const pIdx = i * 4;
+        const red = pixels[pIdx] / 255;
+        const green = pixels[pIdx + 1] / 255;
+        const blue = pixels[pIdx + 2] / 255;
+        lum = 0.299 * red + 0.587 * green + 0.114 * blue;
+
+        // Sobel benzeri kenar kontur algılama (yüz hatlarını keskinleştirir)
+        if (c < COLS - 1) {
+          const nextIdx = (i + 1) * 4;
+          const nextLum = (pixels[nextIdx] + pixels[nextIdx+1] + pixels[nextIdx+2]) / 765;
+          edgeBoost = Math.abs(lum - nextLum) * 2.5;
+        }
+      } else {
+        // Kamerasız Simülasyon Modu: Matematiksel 3D Biyo-Heykel Dalgaları
+        const distCenter = Math.hypot(baseX * 0.8, baseY);
+        lum = Math.max(0, Math.cos(distCenter * 0.055 - clock * 1.5) * Math.exp(-distCenter * 0.018));
+        edgeBoost = Math.abs(Math.sin(baseX * 0.12 + clock)) * 0.25;
+      }
+
+      // Z-Ekseni 3D Rölyef Yüksekliği
+      let targetZ = (lum - 0.25) * depthMultiplier + edgeBoost * 18;
+
+      // Lazer tarayıcı çubuğu geçerken o satırı öne doğru parlat
+      const distToScanner = Math.abs(baseY - scanY);
+      if (distToScanner < 4.5) {
+        targetZ += (4.5 - distToScanner) * 2.2;
+      }
+
+      // El etkileşimi: El yaklaştığında 3D hologram yüzeyinde elektromanyetik dalga oluştur
+      if (handPoint.active) {
+        const dx = baseX - handPoint.x;
+        const dy = baseY - handPoint.y;
+        const d = Math.hypot(dx, dy);
+        if (d < 34) {
+          const ripple = Math.cos(d * 0.35 - clock * 6) * (34 - d) * (handPoint.pinch ? 0.85 : 0.45);
+          targetZ += ripple;
+        }
+      }
+
+      smoothZ[i] += (targetZ - smoothZ[i]) * 0.28;
+      posArr[i3] = baseX + rowGlitch;
+      posArr[i3 + 1] = baseY;
+      posArr[i3 + 2] = smoothZ[i];
+
+      // SANATSAL MODLARA GÖRE HOLOGRAFİK RENK KODLAMASI
+      const zNorm = Math.max(0, Math.min(1, (smoothZ[i] + 20) / (depthMultiplier + 15)));
+      const scanGlow = distToScanner < 4.5 ? 0.5 : 0;
+
+      if (currentMode === 1) {
+        // MOD 2: Kızıl İplik & Altın Nöral Ağ (Chiharu Shiota / Çağdaş Enstalasyon Estetiği)
+        colArr[i3] = Math.min(1, 0.35 + zNorm * 0.85 + scanGlow);
+        colArr[i3 + 1] = Math.min(1, zNorm * 0.22 + edgeBoost * 0.6);
+        colArr[i3 + 2] = Math.min(1, 0.08 + zNorm * 0.25);
+      } else if (currentMode === 2) {
+        // MOD 3: Spektral Prizma (Kristal Beyaz / Elektrik Mor / Camgöbeği)
+        colArr[i3] = Math.min(1, 0.25 + zNorm * 0.75);
+        colArr[i3 + 1] = Math.min(1, 0.5 + Math.sin(zNorm * 3.14 + clock) * 0.4);
+        colArr[i3 + 2] = 1.0;
+      } else {
+        // MOD 1 & MOD 4: Siber-Lazer Volümetrik Hologram (Turkuaz / Lazer Mavisi / Beyaz Kontur)
+        colArr[i3] = Math.min(1, zNorm * 0.25 + edgeBoost * 0.8 + scanGlow);
+        colArr[i3 + 1] = Math.min(1, 0.25 + zNorm * 0.85 + scanGlow);
+        colArr[i3 + 2] = Math.min(1, 0.45 + zNorm * 0.95);
+      }
+    }
+  }
+
+  meshGeom.attributes.position.needsUpdate = true;
+  meshGeom.attributes.color.needsUpdate = true;
+
+  // Spektral Prizma modunda RGB katmanlarını hareketle ayrıştır
+  if (currentMode === 2) {
+    const shift = 2.5 + Math.sin(clock * 3) * 1.8 + (handPoint.active ? 3.5 : 0);
+    ghostLayer1.position.x = shift;
+    ghostLayer2.position.x = -shift;
+  }
+
+  // 3D Perspektif ve Otomatik Salınım (Turntable)
+  if (!isDragging && autoTurntable) {
+    const autoYaw = Math.sin(clock * 0.45) * 0.42;
+    const autoPitch = Math.cos(clock * 0.3) * 0.14;
+    holoGroup.rotation.y += (targetRot.y + autoYaw - holoGroup.rotation.y) * 0.08;
+    holoGroup.rotation.x += (targetRot.x + autoPitch - holoGroup.rotation.x) * 0.08;
+  } else {
+    holoGroup.rotation.y += (targetRot.y - holoGroup.rotation.y) * 0.12;
+    holoGroup.rotation.x += (targetRot.x - holoGroup.rotation.x) * 0.12;
+  }
+
+  // ==========================================================================
+  // RENDER: TEK EKRAN VEYA 4-EKSENLİ FİZİKSEL PİRAMİT (PEPPER'S GHOST) MODU
+  // ==========================================================================
+  if (currentMode !== 3) {
+    // Standart Tam Ekran 3D Volümetrik Render
+    renderer.setScissorTest(false);
+    renderer.setViewport(0, 0, width, height);
+    holoGroup.rotation.z = 0;
+    renderer.render(scene, camera);
+  } else {
+    // 4-YÖNLÜ FİZİKSEL PİRAMİT PROJEKSİYON MODU (Kuzey, Güney, Doğu, Batı)
+    renderer.setScissorTest(true);
+    renderer.clear();
+
+    const minDim = Math.min(width, height);
+    const boxSize = Math.floor(minDim * 0.36);
+    const cx = Math.floor(width / 2);
+    const cy = Math.floor(height / 2);
+    const offset = Math.floor(boxSize * 0.72);
+
+    const views = [
+      { x: cx - boxSize / 2, y: cy + offset - boxSize / 2, rotZ: Math.PI },      // Üst (Ters)
+      { x: cx - boxSize / 2, y: cy - offset - boxSize / 2, rotZ: 0 },            // Alt (Düz)
+      { x: cx - offset - boxSize / 2, y: cy - boxSize / 2, rotZ: -Math.PI / 2 }, // Sol (90 derece)
+      { x: cx + offset - boxSize / 2, y: cy - boxSize / 2, rotZ: Math.PI / 2 }   // Sağ (-90 derece)
+    ];
+
+    const origAspect = camera.aspect;
+    camera.aspect = 1.0;
+    camera.updateProjectionMatrix();
+
+    views.forEach(v => {
+      renderer.setViewport(v.x, v.y, boxSize, boxSize);
+      renderer.setScissor(v.x, v.y, boxSize, boxSize);
+      holoGroup.rotation.z = v.rotZ;
+      renderer.render(scene, camera);
+    });
+
+    camera.aspect = origAspect;
+    camera.updateProjectionMatrix();
+  }
+}
+</script>
+</body>
+</html>
